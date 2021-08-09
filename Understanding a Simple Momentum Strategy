@@ -1,1 +1,123 @@
 
+import pandas as pd
+import numpy as np
+from pandas import read_csv
+import matplotlib.pyplot as pt
+import talib as ta 
+#Reading the file and setting the index column as Date
+bnk = read_csv("File_Path",index_col='Date')
+
+bnk = bnk.dropna()
+bnk.tail()
+bnk.index
+
+bnsma = pd.DataFrame()
+bnsma['SMA30'] = ta.EMA(bnk['Adj Close'],timeperiod=30)
+bnsma['SMA90'] = ta.EMA(bnk['Adj Close'],timeperiod=90)
+bnsma['SMA100'] = ta.EMA(bnk['Adj Close'],timeperiod=100)
+bnsma['Adj Close'] = bnk['Adj Close']
+bnsma.head(),bnsma.tail()
+
+# To make sure EMA is correctly calculated
+bnsma.count(axis=0,numeric_only=True)
+bnsma.isna().sum(axis=0)
+
+bnsma[['Adj Close','SMA30','SMA90','SMA100']].plot(figsize=(15,5))
+pt.show()
+
+#Checking the length of Dataframe
+len(bnsma),bnsma.shape()
+
+#Calculating daily_pct and yearly returns
+bnsma['daily_retuns'] = bnsma['Adj Close'].pct_change()
+bnsma['yearly_retuns'] = bnsma['Adj Close'].pct_change(1229) # The last row
+bnsma.tail()
+
+#Plotting the graph
+bnsma['Adj Close'].plot(figsize=(15,6))
+
+# Converting the index to date time index
+bnsma.index = pd.to_datetime(bnsma.index)
+
+#Grouping using [Adj Close] based on year and month
+month_groups = bnsma['Adj Close'].groupby([bnsma.index.year,bnsma.index.month])
+
+def cal_mnth_cum_return(x): 
+
+    daily_chng = x.pct_change()
+    
+    daily_chng.fillna(0,inplace=True)
+    
+    return (daily_chng+1).cumprod()
+
+bnsma['mnth_cum_return'] = month_groups.apply(cal_mnth_cum_return)
+
+#To view the Data Frame
+bnsma.head(),bnsma.tail()
+
+#Setting stop loss at 5%. Checking is the cummulative value is less than 95% at the start of the month.If so we exit and 
+# wait for 30 days.This signal value is used to create a strategy.
+bnsma['signal'] = np.where(bnsma['mnth_cum_return']<0.95,0,1)
+
+# Caculating Strategy returns ; multiply daily_return * Signal and then calculating cummulative value for it
+bnsma['stgy_return'] = bnsma['daily_retuns'] * bnsma['signal']
+#Cummulative return on this strategy
+cum_stgy_return = (bnsma['stgy_return']+1).cumprod()
+
+#To view the DataFrame
+bnsma.head(),bnsma.tail()
+
+# To check the cummulative returns
+cum_stgy_return[-1]
+
+#Plotting a graph for cummulative return on this strategy
+%matplotlib inline
+pt.style.use('seaborn-darkgrid')
+cum_stgy_return.plot(figsize=(15,5))
+pt.title('Strategy returns',fontsize=12)
+pt.xlabel('Date',fontsize=12)
+pt.ylabel('cumm returns',fontsize=12)
+pt.show()
+
+#Calculating total returns or absolute returns using cum_stgy_return
+total_retuns = (cum_stgy_return.iloc[-1]-1)*100
+print('total retuns is %.4f%%.'% total_retuns)
+
+#Calculating annualized return i.e cum_stgy_return.iloc[-1]^(252/total_days)-1
+total_days = len(cum_stgy_return)
+print('Total number of Trading days %s' % total_days)
+cagr = (cum_stgy_return.iloc[-1]**(252/total_days)-1)*100
+print('CAGR is %.4f%%' % cagr)
+
+#Volality is calculated by bnsma['stgy_return'] * sqrt(total_days)
+ann_vol = np.std(bnsma['stgy_return'])*(total_days**0.5)
+print('Annual volatility is %.4f%%' % ann_vol)
+
+#Sharp ratio is calculated by bnsma['stgy_return'] / ann_vol
+sharp_ratio = np.mean(bnsma['stgy_return'])/ann_vol
+print('Sharp Ratio %.4f%%' % sharp_ratio)
+
+# Maxdrawdown is calculated using cum_stgy_return 
+
+def cal_drawdown(cum_rets):
+    runn_max = np.maximum.accumulate(cum_rets.dropna())
+    #runn_max[runn_max<1] = 1
+    drawdown = cum_rets/runn_max -1
+    return drawdown
+
+drawdown = cal_drawdown(cum_stgy_return)
+min_dd = drawdown.max()*100
+max_dd = drawdown.min()*100
+print('Max drawdown %.2f%%' % max_dd)
+print('Min drawdown %.2f%%' % min_dd)
+
+# Plotting the drawdown graph to have a better visibility
+def plot_drawdown(x):
+    pt.figure(figsize=(15,5))
+    x.plot(color='r')
+    pt.fill_between(x.index,x.values,color='red')
+    pt.grid(which='major',color='k')
+    pt.show()
+    
+plot_drawdown(drawdown)
+
